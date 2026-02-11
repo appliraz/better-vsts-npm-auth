@@ -1,0 +1,229 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+jest.mock("fs");
+jest.mock("path");
+jest.mock("os", () => ({ homedir: jest.fn(() => "/foobar") }));
+let path = require("path");
+let fs = require("fs");
+const yarnrcyml_1 = require("./yarnrcyml");
+describe("In the YarnRcYml module,", () => {
+    afterEach(() => {
+        jest.resetAllMocks();
+        expect.hasAssertions();
+    });
+    describe("the YarnRcYml class", () => {
+        /**
+         * @type {YarnrcYml}
+         */
+        let foo;
+        beforeEach(() => (foo = new yarnrcyml_1.YarnrcYml("foo")));
+        describe("has a constructor which", () => {
+            test("constructs a filePath to a .yarnrc.yml file when given a directory", () => {
+                path.join.mockImplementation((a, b) => a + "/" + b);
+                let foo = new yarnrcyml_1.YarnrcYml("/some/path");
+                expect(foo.filePath).toEqual("/some/path/.yarnrc.yml");
+            });
+            test("uses the filePath as given when it points to a .yarnrc.yml file", () => {
+                const weirdPath = "/some/path/with/.an-oddly_namedButValid.yarnrc.yml";
+                let foo = new yarnrcyml_1.YarnrcYml(weirdPath);
+                expect(foo.filePath).toEqual(weirdPath);
+            });
+            test("initialized an empty settings object", () => {
+                let foo = new yarnrcyml_1.YarnrcYml("somepath");
+                expect(foo.settings).toEqual({});
+            });
+        });
+        describe("has a method getRegistries which", () => {
+            test("returns an empty array when there are no settings", () => {
+                expect(foo.getRegistries()).toEqual([]);
+            });
+            test("returns an empty array when none of the settings are registreies", () => {
+                foo.settings = {
+                    "always-auth": "true",
+                    cache: "some/path"
+                };
+                expect(foo.getRegistries()).toEqual([]);
+            });
+            test("returns an array of Registry objects when settings contains one or more registries", () => {
+                const myregistry = "https://myregistry.com";
+                const myprivateregistry = "https://private.myregistry.com";
+                foo.settings = {
+                    "always-auth": "false",
+                    npmRegistryServer: myregistry,
+                    npmScopes: {
+                        private: {
+                            npmRegistryServer: myprivateregistry,
+                        }
+                    }
+                };
+                let registries = foo.getRegistries();
+                expect(registries).not.toEqual([]);
+                expect(registries).toHaveLength(2);
+                expect(registries[0].url).toEqual(myregistry);
+                expect(registries[1].url).toEqual(myprivateregistry);
+            });
+        });
+        describe("has a method readSettingsFromFile which", () => {
+            test("rejects when there is an error reading the .yarnrc.yml file", () => {
+                fs.readFile.mockImplementation((_a, _b, cb) => {
+                    cb({ code: "ERROR" });
+                });
+                return expect(foo.readSettingsFromFile()).rejects.toHaveProperty("code", "ERROR");
+            });
+            test("resolves settings as JSON from .yarnrc.yml file with entries", () => {
+                const registryName = "//foo.pkgs.visualstudio.com/_packaging/npm-mirror/npm/registry/";
+                const token = "foobar";
+                fs.readFile.mockImplementation((_a, _b, cb) => {
+                    cb(null, `npmRegistries:\n  "${registryName}":\n    npmAlwaysAuth: true\n    npmAuthToken: ${token}\n`);
+                });
+                return expect(foo.readSettingsFromFile()).resolves.toHaveProperty("settings", {
+                    npmRegistries: {
+                        ["//foo.pkgs.visualstudio.com/_packaging/npm-mirror/npm/registry/"]: {
+                            npmAlwaysAuth: true,
+                            npmAuthToken: "foobar"
+                        }
+                    }
+                });
+            });
+            describe("resolves settings as empty JSON when .yarnrc.yml", () => {
+                test("is empty", () => {
+                    fs.readFile.mockImplementation((_a, _b, cb) => {
+                        cb(null, "");
+                    });
+                    return expect(foo.readSettingsFromFile()).resolves.toHaveProperty("settings", {});
+                });
+                test("is whitespace", () => {
+                    fs.readFile.mockImplementation((_a, _b, cb) => {
+                        cb(null, "\r\n\t  ");
+                    });
+                    return expect(foo.readSettingsFromFile()).resolves.toHaveProperty("settings", {});
+                });
+                test("does not exist", () => {
+                    fs.readFile.mockImplementation((_a, _b, cb) => {
+                        cb({ code: "ENOENT" });
+                    });
+                    let result = foo.readSettingsFromFile();
+                    return expect(result)
+                        .resolves.toBeInstanceOf(yarnrcyml_1.YarnrcYml)
+                        .then(() => expect(result).resolves.toHaveProperty("settings", {}));
+                });
+            });
+        });
+        describe("has a method saveSettingsToFile which", () => {
+            test("rejects if there is an error writing the file", () => {
+                const someError = { error: "foo" };
+                fs.writeFile.mockImplementation((_path, _content, cb) => {
+                    cb(someError);
+                });
+                return expect(foo.saveSettingsToFile()).rejects.toEqual(someError);
+            });
+            test("writes the js-yaml-encoded settings", () => {
+                foo.settings = { some: "value" };
+                fs.writeFile.mockImplementation((_path, content, cb) => {
+                    expect(content).toContain("some: value");
+                    cb(null);
+                });
+                return expect(foo.saveSettingsToFile())
+                    .resolves.toBeUndefined()
+                    .then(() => {
+                    expect.assertions(2);
+                });
+            });
+        });
+        describe("has a method getUserNpmrc which", () => {
+            test("returns a YarnrcYml object with path derived from user .npmrc path (homedir)", () => {
+                const os = require("os");
+                os.homedir.mockReturnValue("/foobar");
+                path.join.mockImplementation((a, b) => {
+                    const x = a != null ? a : "/foobar";
+                    return x.endsWith("/") ? x + b : x + "/" + b;
+                });
+                path.dirname.mockImplementation((p) => p.replace(/\/[^/]*$/, "") || p);
+                let result = yarnrcyml_1.YarnrcYml.getUserNpmrc();
+                expect(result).toBeInstanceOf(yarnrcyml_1.YarnrcYml);
+                expect(result).toHaveProperty("filePath", "/foobar/.yarnrc.yml");
+            });
+            test("returns path with .yarnrc.yml when user config path does not end with .npmrc", () => {
+                const customPath = "/custom/dir";
+                const orig = process.env.NPM_CONFIG_USERCONFIG;
+                process.env.NPM_CONFIG_USERCONFIG = customPath;
+                path.dirname.mockImplementation((p) => (p === "/custom/dir" ? "/custom" : p.replace(/\/[^/]*$/, "") || p));
+                path.join.mockImplementation((a, b) => (a != null ? a : "") + "/" + b);
+                try {
+                    let result = yarnrcyml_1.YarnrcYml.getUserNpmrc();
+                    expect(result).toBeInstanceOf(yarnrcyml_1.YarnrcYml);
+                    expect(result).toHaveProperty("filePath", "/custom/.yarnrc.yml");
+                }
+                finally {
+                    if (orig !== undefined)
+                        process.env.NPM_CONFIG_USERCONFIG = orig;
+                    else
+                        delete process.env.NPM_CONFIG_USERCONFIG;
+                }
+            });
+        });
+    });
+});
+function generateRegistryTests(name, useLegacyUrl) {
+    describe(name, () => {
+        describe("has a constructor which", () => {
+            describe("constructs an object", () => {
+                let feed = "npm-mirror";
+                let project = "foobar";
+                let fakeRegistry = useLegacyUrl ? `https://${project}.pkgs.visualstudio.com/_packaging/${feed}/npm/registry/` : `https://pkgs.dev.azure.com/${project}/_packaging/${feed}/npm/registry`;
+                let o;
+                beforeAll(() => {
+                    o = new yarnrcyml_1.YarnRcYmlRegistry(fakeRegistry);
+                });
+                test("has a public property 'url'", () => {
+                    expect(o).toHaveProperty("url", fakeRegistry);
+                });
+                test("has a public property 'token' which is empty by default", () => {
+                    expect(o).toHaveProperty("token", "");
+                });
+                test("has a public property 'feed' which is the name of the VSTS feed", () => {
+                    expect(o).toHaveProperty("feed", feed);
+                });
+                test("has a public property 'project' which is the name of the VSTS project collection", () => {
+                    expect(o).toHaveProperty("project", project);
+                });
+            });
+        });
+        describe("has a method 'getAuthSettings' which", () => {
+            // TODO - test for basic auth settings and token vs. basic auth precedence
+            /**
+             * @type {YarnRcYmlRegistry}
+             */
+            let o;
+            beforeEach(() => {
+                o = new yarnrcyml_1.YarnRcYmlRegistry(useLegacyUrl ?
+                    "https://foobar.pkgs.visualstudio.com/_packaging/npm-mirror/npm/registry/" : "https://pkgs.dev.azure.com/foobar/_packaging/npm-mirror/npm/registry/");
+            });
+            afterEach(() => (o = undefined));
+            test("returns an empty object if the Registry does not have a token and does not have basicAuthSettings", () => {
+                expect(o.getAuthSettings()).toEqual({});
+            });
+            test("returns an object with npmAuthIdent set to the username and password if both are populated and there is no token", () => {
+                o.basicAuthSettings = {
+                    username: "foo",
+                    password: "bar"
+                };
+                let result = o.getAuthSettings();
+                expect(result.npmAuthIdent).toEqual("foo:bar");
+            });
+            test("returns a npmRegistries object, containing a key with the 'registry/' suffix", () => {
+                const fakeToken = "foo";
+                o.token = fakeToken;
+                let result = o.getAuthSettings();
+                const k_withRegistrySuffix = useLegacyUrl ?
+                    "//foobar.pkgs.visualstudio.com/_packaging/npm-mirror/npm/registry/" : "//pkgs.dev.azure.com/foobar/_packaging/npm-mirror/npm/registry/";
+                const npmRegistries = result.npmRegistries;
+                expect(Object.getOwnPropertyNames(result)).toHaveLength(1);
+                expect(npmRegistries[k_withRegistrySuffix].npmAuthToken).toEqual(fakeToken);
+            });
+        });
+    });
+}
+generateRegistryTests("(legacy) the YarnRcYmlRegistry class", true);
+generateRegistryTests("the YarnRcYmlRegistry class", false);
+//# sourceMappingURL=yarnrcyml.test.js.map
