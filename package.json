@@ -22,7 +22,8 @@
     "test:watch": "yarn run test --watch",
     "precommit": "lint-staged",
     "prettier:autofix": "prettier --write *.{js,json,md}",
-    "prettier:ci": "prettier -l *.{js,json,md}"
+    "prettier:ci": "prettier -l *.{js,json,md}",
+    "prepare": "pnpm build"
   },
   "repository": "https://github.com/zumwald/better-vsts-npm-auth.git",
   "author": "Daniel Zumwalt <daniel.zumwalt@moutlook.com>",
